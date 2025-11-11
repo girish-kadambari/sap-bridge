@@ -122,7 +122,7 @@ public class SapGuiConnector
 
     private object GetActiveSession()
     {
-        object connections = GetProperty(_sapGuiApp!, "Connections");
+        object connections = GetProperty(_sapGuiApp!, "Connections")!;
         int connectionCount = (int)GetProperty(connections, "Count")!;
         
         if (connectionCount == 0)
@@ -265,8 +265,9 @@ public class SapGuiConnector
         {
             try
             {
-                var connection = session.Parent;
-                connection.CloseSession(session.Id);
+                object connection = GetProperty(session, "Parent")!;
+                string sessionIdFromSap = GetProperty(session, "Id") as string ?? "";
+                InvokeMethod(connection, "CloseSession", sessionIdFromSap);
                 _sessions.Remove(sessionId);
                 _logger.Information($"Disconnected session: {sessionId}");
             }
