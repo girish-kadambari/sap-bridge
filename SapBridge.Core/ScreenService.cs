@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using Serilog;
 using SapBridge.Core.Models;
+using PropertyInfo = SapBridge.Core.Models.PropertyInfo;
 
 namespace SapBridge.Core;
 
