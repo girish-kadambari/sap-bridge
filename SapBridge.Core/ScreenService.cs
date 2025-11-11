@@ -354,6 +354,35 @@ public class ScreenService
             }
             else
             {
+                // No children array found - this is expected for leaf nodes
+                // But for tabs, log a warning as they should have children
+                if (propertiesElement.HasValue)
+                {
+                    try
+                    {
+                        foreach (JsonProperty prop in element.EnumerateObject())
+                        {
+                            if (prop.Name.Equals("properties", StringComparison.OrdinalIgnoreCase))
+                            {
+                                foreach (JsonProperty innerProp in prop.Value.EnumerateObject())
+                                {
+                                    if (innerProp.Name.Equals("Type", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        string? typeValue = innerProp.Value.GetString();
+                                        if (typeValue != null && 
+                                            (typeValue.Contains("Tab", StringComparison.OrdinalIgnoreCase) ||
+                                             typeValue.Contains("Strip", StringComparison.OrdinalIgnoreCase)))
+                                        {
+                                            _logger.Warning($"{indent}  ⚠️  Tab/TabStrip has NO children array - might be inactive tab!");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+                }
+                
                 _logger.Debug($"{indent}  No 'children' array found");
             }
         }
@@ -474,33 +503,51 @@ public class ScreenService
                     if (isTable)
                     {
                         _logger.Debug($"⚠️  Skipping children of Table: {childId} (to avoid cell explosion)");
+                        continue;  // Skip to next sibling
                     }
-                    else
+
+                    // Try to traverse into children - use multiple fallback strategies
+                    bool didRecurse = false;
+                    
+                    // Strategy 1: Try to check if object has children
+                    try
                     {
-                        // Check if this object has children - if yes, traverse them!
-                        // Don't rely only on IsContainer() as SAP has many unknown container types
-                        try
+                        var grandChildren = GetProperty(child, "Children");
+                        if (grandChildren != null)
                         {
-                            var grandChildren = GetProperty(child, "Children");
-                            if (grandChildren != null)
+                            int grandChildCount = (int)(GetProperty(grandChildren, "Count") ?? 0);
+                            if (grandChildCount > 0)
                             {
-                                int grandChildCount = (int)(GetProperty(grandChildren, "Count") ?? 0);
-                                if (grandChildCount > 0)
-                                {
-                                    _logger.Debug($"Recursing into {childType} (has {grandChildCount} children): {childId}");
-                                    TraverseObjects(child, childId, objects, depth + 1);
-                                }
-                            }
-                        }
-                        catch
-                        {
-                            // If can't check children, try IsContainer as fallback
-                            if (IsContainer(childType))
-                            {
-                                _logger.Debug($"Recursing into known container: {childId}");
+                                _logger.Debug($"Recursing into {childType} (has {grandChildCount} children): {childId}");
                                 TraverseObjects(child, childId, objects, depth + 1);
+                                didRecurse = true;
+                            }
+                            else
+                            {
+                                _logger.Debug($"{childType} has 0 children, skipping recursion: {childId}");
                             }
                         }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Debug($"Could not check Children property for {childId}: {ex.Message}");
+                    }
+                    
+                    // Strategy 2: If Strategy 1 failed, recurse into known container types anyway
+                    if (!didRecurse && IsContainer(childType))
+                    {
+                        _logger.Debug($"Recursing into known container type {childType}: {childId}");
+                        TraverseObjects(child, childId, objects, depth + 1);
+                        didRecurse = true;
+                    }
+                    
+                    // Strategy 3: For tabs specifically, ALWAYS recurse (tabs might have lazy-loaded children)
+                    if (!didRecurse && (childType.Contains("Tab", StringComparison.OrdinalIgnoreCase) || 
+                                        childType.Contains("Strip", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        _logger.Information($"🔍 Force recursing into Tab/TabStrip: {childId}");
+                        TraverseObjects(child, childId, objects, depth + 1);
+                        didRecurse = true;
                     }
                 }
                 catch (Exception ex)
