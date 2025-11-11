@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Mvc;
-using Serilog;
 using SapBridge.Core;
 using SapBridge.Core.Models;
 
@@ -10,9 +9,9 @@ namespace SapBridge.Api.Controllers;
 public class SessionController : ControllerBase
 {
     private readonly SapGuiConnector _connector;
-    private readonly ILogger _logger;
+    private readonly Serilog.ILogger _logger;
 
-    public SessionController(SapGuiConnector connector, ILogger logger)
+    public SessionController(SapGuiConnector connector, Serilog.ILogger logger)
     {
         _connector = connector;
         _logger = logger;

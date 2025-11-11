@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Mvc;
-using Serilog;
 using SapBridge.Core;
 using SapBridge.Core.Models;
 
@@ -12,13 +11,13 @@ public class ObjectController : ControllerBase
     private readonly SapGuiConnector _connector;
     private readonly ActionExecutor _actionExecutor;
     private readonly ComIntrospector _introspector;
-    private readonly ILogger _logger;
+    private readonly Serilog.ILogger _logger;
 
     public ObjectController(
         SapGuiConnector connector,
         ActionExecutor actionExecutor,
         ComIntrospector introspector,
-        ILogger logger)
+        Serilog.ILogger logger)
     {
         _connector = connector;
         _actionExecutor = actionExecutor;

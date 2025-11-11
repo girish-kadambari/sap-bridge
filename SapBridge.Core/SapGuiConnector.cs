@@ -1,9 +1,11 @@
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using Serilog;
 using SapBridge.Core.Models;
 
 namespace SapBridge.Core;
 
+[SupportedOSPlatform("windows")]
 public class SapGuiConnector
 {
     private readonly ILogger _logger;

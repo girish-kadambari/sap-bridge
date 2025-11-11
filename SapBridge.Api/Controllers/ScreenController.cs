@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Mvc;
-using Serilog;
 using SapBridge.Core;
 
 namespace SapBridge.Api.Controllers;
@@ -10,12 +9,12 @@ public class ScreenController : ControllerBase
 {
     private readonly SapGuiConnector _connector;
     private readonly ScreenService _screenService;
-    private readonly ILogger _logger;
+    private readonly Serilog.ILogger _logger;
 
     public ScreenController(
         SapGuiConnector connector,
         ScreenService screenService,
-        ILogger logger)
+        Serilog.ILogger logger)
     {
         _connector = connector;
         _screenService = screenService;
