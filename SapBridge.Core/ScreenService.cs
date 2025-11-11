@@ -178,24 +178,30 @@ public class ScreenService
 
     /// <summary>
     /// Parse JSON from GetObjectTree into ObjectInfo list
+    /// JSON structure: {"children": [{"properties": {...}, "children": [...]}]}
     /// </summary>
     private void ParseObjectTreeJson(string json, List<ObjectInfo> objects)
     {
         try
         {
-            _logger.Debug($"Parsing GetObjectTree JSON (length: {json.Length} chars)");
-            _logger.Debug($"JSON preview: {(json.Length > 200 ? json.Substring(0, 200) + "..." : json)}");
+            _logger.Information($"Parsing GetObjectTree JSON (length: {json.Length} chars)");
+            
+            // Log JSON preview for debugging
+            string preview = json.Length > 500 ? json.Substring(0, 500) + "..." : json;
+            _logger.Debug($"JSON preview: {preview}");
             
             using JsonDocument doc = JsonDocument.Parse(json);
             JsonElement root = doc.RootElement;
 
-            _logger.Debug($"JSON root type: {root.ValueKind}");
+            _logger.Information($"JSON root type: {root.ValueKind}");
             
-            // The JSON structure is typically an array or object with nested children
-            // Recursively parse the tree
-            ParseJsonElement(root, objects);
+            int beforeCount = objects.Count;
             
-            _logger.Debug($"Parsed {objects.Count} objects from JSON");
+            // Parse the JSON tree recursively
+            ParseJsonElement(root, objects, 0);
+            
+            int parsedCount = objects.Count - beforeCount;
+            _logger.Information($"Successfully parsed {parsedCount} objects from GetObjectTree JSON");
         }
         catch (Exception ex)
         {
@@ -206,82 +212,130 @@ public class ScreenService
 
     /// <summary>
     /// Recursively parse JSON elements into ObjectInfo
+    /// Structure: {"properties": {...}, "children": [...]} or {"children": [...]}
     /// </summary>
-    private void ParseJsonElement(JsonElement element, List<ObjectInfo> objects)
+    private void ParseJsonElement(JsonElement element, List<ObjectInfo> objects, int depth)
     {
+        // Limit recursion depth for safety
+        if (depth > 20)
+        {
+            _logger.Warning($"Max recursion depth reached at depth {depth}");
+            return;
+        }
+
+        string indent = new string(' ', depth * 2);
+        _logger.Debug($"{indent}ParseJsonElement: depth={depth}, type={element.ValueKind}");
+
         // If it's an array, process each item
         if (element.ValueKind == JsonValueKind.Array)
         {
+            int index = 0;
             foreach (JsonElement item in element.EnumerateArray())
             {
-                ParseJsonElement(item, objects);
+                _logger.Debug($"{indent}  Processing array item {index}");
+                ParseJsonElement(item, objects, depth + 1);
+                index++;
             }
             return;
         }
 
-        // If it's an object, extract properties
+        // If it's an object, check for "properties" and "children"
         if (element.ValueKind == JsonValueKind.Object)
         {
-            var objInfo = new ObjectInfo();
-            var properties = new Dictionary<string, PropertyInfo>();
+            JsonElement? propertiesElement = null;
+            JsonElement? childrenElement = null;
 
-            foreach (JsonProperty prop in element.EnumerateObject())
+            // First pass: identify "properties" and "children" fields
+            foreach (JsonProperty jsonProp in element.EnumerateObject())
             {
-                string propName = prop.Name;
-                JsonElement value = prop.Value;
-
-                // Map common properties to ObjectInfo fields
-                switch (propName.ToLower())
+                _logger.Debug($"{indent}  Found property: {jsonProp.Name} (type: {jsonProp.Value.ValueKind})");
+                
+                if (jsonProp.Name.Equals("properties", StringComparison.OrdinalIgnoreCase) && 
+                    jsonProp.Value.ValueKind == JsonValueKind.Object)
                 {
-                    case "id":
-                        objInfo.Path = value.GetString() ?? "";
-                        break;
-                    case "type":
-                        objInfo.Type = value.GetString() ?? "";
-                        break;
-                    case "name":
-                        objInfo.Name = value.GetString() ?? "";
-                        break;
-                    case "text":
-                        objInfo.Text = value.GetString() ?? "";
-                        break;
-                    case "tooltip":
-                        objInfo.Label = value.GetString() ?? "";
-                        break;
-                    case "children":
-                        // Recursively process children
-                        if (value.ValueKind == JsonValueKind.Array)
-                        {
-                            foreach (JsonElement child in value.EnumerateArray())
-                            {
-                                ParseJsonElement(child, objects);
-                            }
-                        }
-                        break;
-                    default:
-                        // Add other properties to the properties dictionary
-                        properties[propName] = new PropertyInfo
-                        {
-                            Type = value.ValueKind.ToString(),
-                            Value = GetJsonValue(value),
-                            Readable = true,
-                            Writable = propName.ToLower() == "changeable" && value.GetString() == "True"
-                        };
-                        break;
+                    propertiesElement = jsonProp.Value;
+                    _logger.Debug($"{indent}    -> This is the properties object");
+                }
+                else if (jsonProp.Name.Equals("children", StringComparison.OrdinalIgnoreCase) && 
+                         jsonProp.Value.ValueKind == JsonValueKind.Array)
+                {
+                    childrenElement = jsonProp.Value;
+                    int childCount = 0;
+                    foreach (var _ in jsonProp.Value.EnumerateArray()) childCount++;
+                    _logger.Debug($"{indent}    -> This is the children array ({childCount} children)");
                 }
             }
 
-            // Only add if we have an ID (valid object)
-            if (!string.IsNullOrEmpty(objInfo.Path))
+            // If we have a "properties" object, parse it into ObjectInfo
+            if (propertiesElement.HasValue)
             {
-                objInfo.Properties = properties;
-                objects.Add(objInfo);
-                _logger.Debug($"Added object: {objInfo.Path} (Type: {objInfo.Type})");
+                var objInfo = new ObjectInfo();
+                var properties = new Dictionary<string, PropertyInfo>();
+
+                foreach (JsonProperty prop in propertiesElement.Value.EnumerateObject())
+                {
+                    string propName = prop.Name;
+                    JsonElement value = prop.Value;
+                    string stringValue = value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
+
+                    // Map key properties to ObjectInfo fields
+                    switch (propName)
+                    {
+                        case "Id":
+                            objInfo.Path = stringValue;
+                            break;
+                        case "Type":
+                            objInfo.Type = stringValue;
+                            break;
+                        case "Name":
+                            objInfo.Name = stringValue;
+                            break;
+                        case "Text":
+                            objInfo.Text = stringValue;
+                            break;
+                        case "Tooltip":
+                            objInfo.Label = stringValue;
+                            break;
+                        default:
+                            // Store all properties in the Properties dictionary
+                            properties[propName] = new PropertyInfo
+                            {
+                                Type = value.ValueKind.ToString(),
+                                Value = GetJsonValue(value),
+                                Readable = true,
+                                Writable = propName.Equals("Changeable", StringComparison.OrdinalIgnoreCase) && 
+                                          stringValue.Equals("true", StringComparison.OrdinalIgnoreCase)
+                            };
+                            break;
+                    }
+                }
+
+                // Add object if it has a valid ID/Path
+                if (!string.IsNullOrEmpty(objInfo.Path))
+                {
+                    objInfo.Properties = properties;
+                    objects.Add(objInfo);
+                    _logger.Information($"{indent}✓ Added object: {objInfo.Path} (Type: {objInfo.Type})");
+                }
+                else
+                {
+                    _logger.Warning($"{indent}✗ Skipped object without Path/Id - Type: {objInfo.Type}, Name: {objInfo.Name}");
+                }
             }
             else
             {
-                // Debug: Log why object wasn't added
-                _logger.Debug($"Skipped object without Path - Type: {objInfo.Type}, Name: {objInfo.Name}, Properties: {properties.Count}");
+                _logger.Debug($"{indent}  No 'properties' object found at this level");
+            }
+
+            // Recursively process children array if it exists
+            if (childrenElement.HasValue)
+            {
+                _logger.Debug($"{indent}  Processing children array...");
+                ParseJsonElement(childrenElement.Value, objects, depth + 1);
+            }
+            else
+            {
+                _logger.Debug($"{indent}  No 'children' array found");
             }
         }
     }
