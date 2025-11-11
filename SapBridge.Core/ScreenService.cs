@@ -65,20 +65,21 @@ public class ScreenService
         }
         catch { }
 
-        // Get all objects in the main window - USE OPTIMIZED GetObjectTree
-        // FIX: Ensure we fall back to slow traversal if GetObjectTree returns 0 objects
-        // Previous issue: TryGetObjectTreeOptimized returned true even with 0 objects,
-        // preventing the fallback from ever running
+        // Get all objects in the main window - HYBRID APPROACH
+        // 1. Use GetObjectTree for fast bulk retrieval
+        // 2. Then traverse tabs specifically (GetObjectTree doesn't include inactive tab contents!)
         try
         {
             _logger.Debug("Starting object retrieval...");
             int objectCountBefore = screenState.Objects.Count;
+            bool usedOptimized = false;
             
             // Try the fast path first (GetObjectTree - 10-100x faster!)
             if (TryGetObjectTreeOptimized(session, screenState.Objects))
             {
                 int retrieved = screenState.Objects.Count - objectCountBefore;
                 _logger.Information($"Used optimized GetObjectTree method - retrieved {retrieved} objects");
+                usedOptimized = true;
             }
             else
             {
@@ -96,6 +97,17 @@ public class ScreenService
                 {
                     _logger.Error("Could not find main window wnd[0]");
                 }
+            }
+            
+            // CRITICAL: If we used GetObjectTree, do supplementary traversal for tabs
+            // GetObjectTree doesn't include contents of inactive tabs!
+            if (usedOptimized)
+            {
+                _logger.Information("🔍 Starting supplementary traversal for tabs (GetObjectTree limitation)...");
+                int beforeTabTraversal = screenState.Objects.Count;
+                TraverseTabsForMissingContent(session, screenState.Objects);
+                int tabContentFound = screenState.Objects.Count - beforeTabTraversal;
+                _logger.Information($"Supplementary tab traversal found {tabContentFound} additional objects");
             }
             
             _logger.Information($"Total objects in screen state: {screenState.Objects.Count}");
@@ -559,6 +571,82 @@ public class ScreenService
         catch (Exception ex)
         {
             _logger.Debug(ex, $"Error getting children of {parentPath}");
+        }
+    }
+
+    /// <summary>
+    /// Supplementary traversal specifically for Tab/TabStrip components
+    /// GetObjectTree doesn't include contents of inactive tabs, so we manually traverse them
+    /// </summary>
+    private void TraverseTabsForMissingContent(object session, List<ObjectInfo> objects)
+    {
+        try
+        {
+            // Build a hashset of existing object paths for quick lookup
+            var existingPaths = new HashSet<string>(objects.Select(o => o.Path));
+            int initialCount = objects.Count;
+            
+            // Find all tab-related objects
+            var tabObjects = objects
+                .Where(o => o.Type.Contains("Tab", StringComparison.OrdinalIgnoreCase) ||
+                           o.Type.Contains("Strip", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            
+            _logger.Information($"Found {tabObjects.Count} tab-related objects to traverse");
+            
+            foreach (var tabObj in tabObjects)
+            {
+                try
+                {
+                    _logger.Debug($"Attempting to traverse tab: {tabObj.Path} (Type: {tabObj.Type})");
+                    
+                    // Try to find this object via SAP API
+                    var sapObject = InvokeMethod(session, "FindById", tabObj.Path);
+                    if (sapObject == null)
+                    {
+                        _logger.Debug($"Could not find SAP object for path: {tabObj.Path}");
+                        continue;
+                    }
+                    
+                    // Create a temporary list for this tab's children
+                    var tabChildren = new List<ObjectInfo>();
+                    
+                    // Traverse into this specific tab
+                    TraverseObjects(sapObject, tabObj.Path, tabChildren, 0);
+                    
+                    // Add only NEW objects (that don't already exist)
+                    int addedCount = 0;
+                    foreach (var child in tabChildren)
+                    {
+                        if (!existingPaths.Contains(child.Path))
+                        {
+                            objects.Add(child);
+                            existingPaths.Add(child.Path);
+                            addedCount++;
+                        }
+                    }
+                    
+                    if (addedCount > 0)
+                    {
+                        _logger.Information($"✓ Tab {tabObj.Path} - added {addedCount} new objects");
+                    }
+                    else
+                    {
+                        _logger.Debug($"Tab {tabObj.Path} - no new objects (already captured or empty)");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.Debug(ex, $"Error traversing tab {tabObj.Path}");
+                }
+            }
+            
+            int totalAdded = objects.Count - initialCount;
+            _logger.Information($"Tab supplementary traversal completed: {totalAdded} new objects added");
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Error in supplementary tab traversal");
         }
     }
 
