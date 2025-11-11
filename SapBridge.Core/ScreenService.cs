@@ -475,11 +475,32 @@ public class ScreenService
                     {
                         _logger.Debug($"⚠️  Skipping children of Table: {childId} (to avoid cell explosion)");
                     }
-                    // Recursively traverse if it's a container (but not a table)
-                    else if (IsContainer(childType))
+                    else
                     {
-                        _logger.Debug($"Recursing into container: {childId}");
-                        TraverseObjects(child, childId, objects, depth + 1);
+                        // Check if this object has children - if yes, traverse them!
+                        // Don't rely only on IsContainer() as SAP has many unknown container types
+                        try
+                        {
+                            var grandChildren = GetProperty(child, "Children");
+                            if (grandChildren != null)
+                            {
+                                int grandChildCount = (int)(GetProperty(grandChildren, "Count") ?? 0);
+                                if (grandChildCount > 0)
+                                {
+                                    _logger.Debug($"Recursing into {childType} (has {grandChildCount} children): {childId}");
+                                    TraverseObjects(child, childId, objects, depth + 1);
+                                }
+                            }
+                        }
+                        catch
+                        {
+                            // If can't check children, try IsContainer as fallback
+                            if (IsContainer(childType))
+                            {
+                                _logger.Debug($"Recursing into known container: {childId}");
+                                TraverseObjects(child, childId, objects, depth + 1);
+                            }
+                        }
                     }
                 }
                 catch (Exception ex)
