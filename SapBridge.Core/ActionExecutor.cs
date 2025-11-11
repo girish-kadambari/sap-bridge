@@ -251,8 +251,19 @@ public class ActionExecutor
     /// </summary>
     private static T ConvertToNativeType<T>(object value)
     {
+        // Handle JsonElement from request body
         if (value is JsonElement jsonElement)
         {
+            // If the target is an int but we got a string, try to parse it.
+            if (typeof(T) == typeof(int) && jsonElement.ValueKind == JsonValueKind.String)
+            {
+                if (int.TryParse(jsonElement.GetString(), out int parsedInt))
+                {
+                    return (T)(object)parsedInt;
+                }
+            }
+            
+            // Use default deserialization for other cases
             return jsonElement.Deserialize<T>() ?? throw new InvalidCastException($"Cannot convert JsonElement to {typeof(T).Name}");
         }
         

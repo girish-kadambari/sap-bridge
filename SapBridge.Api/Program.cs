@@ -30,7 +30,7 @@ builder.Services.AddCors(options =>
 // Register application services
 builder.Services.AddSingleton(Log.Logger);
 builder.Services.AddSingleton<SapGuiConnector>();
-builder.Services.AddSingleton<ComIntrospector>(); 
+builder.Services.AddSingleton<ComIntrospector>(); // This is required by ObjectController
 builder.Services.AddSingleton<ActionExecutor>();
 builder.Services.AddSingleton<ScreenService>();
 
