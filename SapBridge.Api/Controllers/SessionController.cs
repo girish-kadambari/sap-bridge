@@ -62,10 +62,28 @@ public class SessionController : ControllerBase
     }
 }
 
+/// <summary>
+/// Request to connect to SAP. All parameters are optional.
+/// - No parameters: Use existing active SAP session
+/// - Server only: Connect by saved connection name (e.g., "SAP Server Latest")
+/// - Server + SystemNumber + Client: Connect by server details
+/// </summary>
 public class ConnectRequest
 {
+    /// <summary>
+    /// Server IP (e.g., "172.21.72.22") or saved connection name (e.g., "SAP Server Latest")
+    /// Leave empty to use existing active session
+    /// </summary>
     public string? Server { get; set; }
-    public string? SystemNumber { get; set; }
-    public string? Client { get; set; }
+    
+    /// <summary>
+    /// SAP system number (e.g., "00"). Default: "00"
+    /// </summary>
+    public string? SystemNumber { get; set; } = "00";
+    
+    /// <summary>
+    /// SAP client (e.g., "100"). Default: "100"
+    /// </summary>
+    public string? Client { get; set; } = "100";
 }
 
