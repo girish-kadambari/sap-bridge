@@ -79,9 +79,12 @@ public class ComIntrospector
             ["GuiTableControl"] = new() { "GetCell", "SetCell", "RowCount", "ColumnCount" },
             ["GuiTree"] = new() { "ExpandNode", "CollapseNode", "SelectNode", "DoubleClickNode" },
             ["GuiTab"] = new() { "Select" },
+            ["GuiTabStrip"] = new() { "SelectedTab" },
             ["GuiMenu"] = new() { "Select" },
             ["GuiToolbarControl"] = new() { "PressButton", "SetButtonState" },
             ["GuiStatusbar"] = new() { "GetText", "GetMessageType" },
+            ["GuiComponentCollection"] = new() { "ElementAt", "Count" },
+            ["GuiContainerShell"] = new() { "FindById" },
         };
 
         // Add known methods for this type

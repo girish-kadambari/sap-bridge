@@ -427,10 +427,10 @@ public class ScreenService
 
     private void TraverseObjects(object parent, string parentPath, List<ObjectInfo> objects, int depth = 0)
     {
-        // Limit recursion depth
-        if (depth > 10)
+        // Limit recursion depth (increased to handle deeply nested tabs/subcontainers)
+        if (depth > 20)
         {
-            _logger.Debug($"Max recursion depth reached at {parentPath}");
+            _logger.Warning($"Max recursion depth (20) reached at {parentPath}");
             return;
         }
 
@@ -498,9 +498,21 @@ public class ScreenService
     {
         var containerTypes = new[] 
         { 
-            "GuiUserArea", "GuiSimpleContainer", "GuiScrollContainer",
-            "GuiSplitterContainer", "GuiBox", "GuiTab", "GuiTabStrip",
-            "GuiShell", "GuiCustomControl"
+            "GuiUserArea", 
+            "GuiSimpleContainer", 
+            "GuiScrollContainer",
+            "GuiSplitterContainer", 
+            "GuiBox", 
+            "GuiTab", 
+            "GuiTabStrip",
+            "GuiShell", 
+            "GuiCustomControl",
+            "GuiComponentCollection",  // For subcontainers (sub/ssub)
+            "GuiContainerShell",       // For embedded containers
+            "GuiContainer",            // Generic container
+            "GuiFrameWindow",          // Frame windows
+            "GuiModalWindow",          // Modal dialogs
+            "GuiMainWindow"            // Main window
         };
         
         return containerTypes.Contains(type);
