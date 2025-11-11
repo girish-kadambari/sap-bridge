@@ -74,6 +74,43 @@ public class ScreenController : ControllerBase
             return StatusCode(500, new { error = ex.Message });
         }
     }
+
+    /// <summary>
+    /// Capture screenshot of SAP GUI window
+    /// </summary>
+    [HttpGet("screenshot/{sessionId}")]
+    [ProducesResponseType(typeof(FileContentResult), 200)]
+    [ProducesResponseType(404)]
+    [ProducesResponseType(500)]
+    public IActionResult CaptureScreenshot(string sessionId)
+    {
+        try
+        {
+            _logger.Information($"Capturing screenshot for session: {sessionId}");
+
+            var session = _connector.GetSession(sessionId);
+            if (session == null)
+            {
+                return NotFound(new { error = $"Session not found: {sessionId}" });
+            }
+
+            var imageData = _screenService.CaptureScreenshot(session);
+
+            if (imageData == null || imageData.Length == 0)
+            {
+                return NotFound(new { error = "Failed to capture screenshot" });
+            }
+
+            _logger.Information($"Screenshot captured: {imageData.Length} bytes");
+
+            return File(imageData, "image/png", $"sap_screenshot_{sessionId}.png");
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, $"Error capturing screenshot for session {sessionId}");
+            return StatusCode(500, new { error = ex.Message });
+        }
+    }
 }
 
 public class QueryRequest

@@ -378,5 +378,158 @@ public class ScreenService
             null
         );
     }
+
+    /// <summary>
+    /// Capture screenshot of SAP GUI window using Windows API
+    /// </summary>
+    public byte[] CaptureScreenshot(object session)
+    {
+        try
+        {
+            // Get main window from SAP session
+            var mainWindow = InvokeMethod(session, "FindById", "wnd[0]");
+            if (mainWindow == null)
+            {
+                _logger.Warning("Main window not found for screenshot");
+                return Array.Empty<byte>();
+            }
+
+            // Get window handle from SAP GUI window
+            var handleObj = GetProperty(mainWindow, "Handle");
+            if (handleObj == null)
+            {
+                _logger.Warning("Window handle not available");
+                return Array.Empty<byte>();
+            }
+
+            // Convert handle to IntPtr
+            IntPtr windowHandle;
+            if (handleObj is int intHandle)
+            {
+                windowHandle = new IntPtr(intHandle);
+            }
+            else if (handleObj is long longHandle)
+            {
+                windowHandle = new IntPtr(longHandle);
+            }
+            else
+            {
+                windowHandle = new IntPtr(Convert.ToInt32(handleObj));
+            }
+
+            // Capture screenshot using Windows API
+            var screenshot = CaptureWindowToByteArray(windowHandle);
+            
+            _logger.Information($"Screenshot captured successfully, size: {screenshot.Length} bytes");
+            
+            return screenshot;
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Error capturing screenshot");
+            return Array.Empty<byte>();
+        }
+    }
+
+    /// <summary>
+    /// Capture window screenshot using Windows GDI API
+    /// </summary>
+    private byte[] CaptureWindowToByteArray(IntPtr windowHandle)
+    {
+        try
+        {
+            // Get window rectangle
+            if (!NativeMethods.GetWindowRect(windowHandle, out NativeMethods.RECT rect))
+            {
+                _logger.Warning("Failed to get window rectangle");
+                return Array.Empty<byte>();
+            }
+
+            int width = rect.Right - rect.Left;
+            int height = rect.Bottom - rect.Top;
+
+            if (width <= 0 || height <= 0)
+            {
+                _logger.Warning($"Invalid window dimensions: {width}x{height}");
+                return Array.Empty<byte>();
+            }
+
+            // Get device context
+            IntPtr hdcSrc = NativeMethods.GetWindowDC(windowHandle);
+            IntPtr hdcDest = NativeMethods.CreateCompatibleDC(hdcSrc);
+            IntPtr hBitmap = NativeMethods.CreateCompatibleBitmap(hdcSrc, width, height);
+            IntPtr hOld = NativeMethods.SelectObject(hdcDest, hBitmap);
+
+            // Copy window content
+            NativeMethods.BitBlt(hdcDest, 0, 0, width, height, hdcSrc, 0, 0, NativeMethods.SRCCOPY);
+
+            // Cleanup device contexts
+            NativeMethods.SelectObject(hdcDest, hOld);
+            NativeMethods.DeleteDC(hdcDest);
+            NativeMethods.ReleaseDC(windowHandle, hdcSrc);
+
+            // Convert to byte array
+            using var bitmap = System.Drawing.Image.FromHbitmap(hBitmap);
+            using var stream = new MemoryStream();
+            bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
+            
+            // Cleanup bitmap
+            NativeMethods.DeleteObject(hBitmap);
+
+            return stream.ToArray();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Error in CaptureWindowToByteArray");
+            return Array.Empty<byte>();
+        }
+    }
+
+    /// <summary>
+    /// Windows API methods for screen capture
+    /// </summary>
+    private static class NativeMethods
+    {
+        public const int SRCCOPY = 0x00CC0020;
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        public struct RECT
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        public static extern IntPtr GetWindowDC(IntPtr hWnd);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        public static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+        public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+        [System.Runtime.InteropServices.DllImport("gdi32.dll")]
+        public static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+
+        [System.Runtime.InteropServices.DllImport("gdi32.dll")]
+        public static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int nWidth, int nHeight);
+
+        [System.Runtime.InteropServices.DllImport("gdi32.dll")]
+        public static extern IntPtr SelectObject(IntPtr hdc, IntPtr hgdiobj);
+
+        [System.Runtime.InteropServices.DllImport("gdi32.dll")]
+        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+        public static extern bool BitBlt(IntPtr hdcDest, int nXDest, int nYDest, int nWidth, int nHeight, 
+            IntPtr hdcSrc, int nXSrc, int nYSrc, int dwRop);
+
+        [System.Runtime.InteropServices.DllImport("gdi32.dll")]
+        public static extern bool DeleteDC(IntPtr hdc);
+
+        [System.Runtime.InteropServices.DllImport("gdi32.dll")]
+        public static extern bool DeleteObject(IntPtr hObject);
+    }
 }
 
