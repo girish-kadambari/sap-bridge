@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json;
 using Serilog;
 using SapBridge.Core.Models;
 
@@ -63,19 +64,200 @@ public class ScreenService
         }
         catch { }
 
-        // Get all objects in the main window
+        // Get all objects in the main window - USE OPTIMIZED GetObjectTree
         try
         {
-            var mainWindow = InvokeMethod(session, "FindById", "wnd[0]");
-            if (mainWindow != null)
-                TraverseObjects(mainWindow, "wnd[0]", screenState.Objects);
+            // Try the fast path first (GetObjectTree - 10-100x faster!)
+            if (TryGetObjectTreeOptimized(session, screenState.Objects))
+            {
+                _logger.Information("Used optimized GetObjectTree method");
+            }
+            else
+            {
+                // Fallback to slow traversal if GetObjectTree not available
+                _logger.Warning("GetObjectTree not available, falling back to slow traversal");
+                var mainWindow = InvokeMethod(session, "FindById", "wnd[0]");
+                if (mainWindow != null)
+                    TraverseObjects(mainWindow, "wnd[0]", screenState.Objects);
+            }
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Error traversing screen objects");
+            _logger.Error(ex, "Error getting screen objects");
         }
 
         return screenState;
+    }
+
+    /// <summary>
+    /// Optimized object retrieval using GetObjectTree (SAP GUI 7.70 patch 3+)
+    /// Returns entire object tree in single JSON call - 10-100x faster than individual COM calls
+    /// </summary>
+    private bool TryGetObjectTreeOptimized(object session, List<ObjectInfo> objects)
+    {
+        try
+        {
+            // Define properties we want to retrieve
+            // Using property names (can also use Magic DispIDs for even better performance)
+            string[] properties = new string[]
+            {
+                "Id",           // Object path/ID
+                "Type",         // GuiTextField, GuiButton, etc.
+                "Name",         // Field name (e.g., RSYST-MANDT)
+                "Text",         // Current text value
+                "Tooltip",      // Tooltip text
+                "Changeable",   // Whether field is editable
+                "Modified",     // Whether field was modified
+                "Left",         // Position
+                "Top",
+                "Width",
+                "Height",
+                "MaxLength"     // For text fields
+            };
+
+            // Call GetObjectTree - returns JSON string
+            // Empty string for ID = get full tree from wnd[0]
+            object? result = InvokeMethod(session, "GetObjectTree", "", properties);
+            
+            if (result == null)
+            {
+                _logger.Debug("GetObjectTree returned null");
+                return false;
+            }
+
+            string json = result.ToString() ?? "";
+            if (string.IsNullOrEmpty(json))
+            {
+                _logger.Debug("GetObjectTree returned empty string");
+                return false;
+            }
+
+            // Parse JSON into objects
+            ParseObjectTreeJson(json, objects);
+            
+            _logger.Information($"GetObjectTree retrieved {objects.Count} objects");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            // GetObjectTree not available (SAP GUI < 7.70 patch 3)
+            // or other error - fall back to slow method
+            _logger.Debug(ex, "GetObjectTree not available or failed");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Parse JSON from GetObjectTree into ObjectInfo list
+    /// </summary>
+    private void ParseObjectTreeJson(string json, List<ObjectInfo> objects)
+    {
+        try
+        {
+            using JsonDocument doc = JsonDocument.Parse(json);
+            JsonElement root = doc.RootElement;
+
+            // The JSON structure is typically an array or object with nested children
+            // Recursively parse the tree
+            ParseJsonElement(root, objects);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Error parsing GetObjectTree JSON");
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Recursively parse JSON elements into ObjectInfo
+    /// </summary>
+    private void ParseJsonElement(JsonElement element, List<ObjectInfo> objects)
+    {
+        // If it's an array, process each item
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement item in element.EnumerateArray())
+            {
+                ParseJsonElement(item, objects);
+            }
+            return;
+        }
+
+        // If it's an object, extract properties
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            var objInfo = new ObjectInfo();
+            var properties = new Dictionary<string, PropertyInfo>();
+
+            foreach (JsonProperty prop in element.EnumerateObject())
+            {
+                string propName = prop.Name;
+                JsonElement value = prop.Value;
+
+                // Map common properties to ObjectInfo fields
+                switch (propName.ToLower())
+                {
+                    case "id":
+                        objInfo.Path = value.GetString() ?? "";
+                        break;
+                    case "type":
+                        objInfo.Type = value.GetString() ?? "";
+                        break;
+                    case "name":
+                        objInfo.Name = value.GetString() ?? "";
+                        break;
+                    case "text":
+                        objInfo.Text = value.GetString() ?? "";
+                        break;
+                    case "tooltip":
+                        objInfo.Label = value.GetString() ?? "";
+                        break;
+                    case "children":
+                        // Recursively process children
+                        if (value.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (JsonElement child in value.EnumerateArray())
+                            {
+                                ParseJsonElement(child, objects);
+                            }
+                        }
+                        break;
+                    default:
+                        // Add other properties to the properties dictionary
+                        properties[propName] = new PropertyInfo
+                        {
+                            Type = value.ValueKind.ToString(),
+                            Value = GetJsonValue(value),
+                            Readable = true,
+                            Writable = propName.ToLower() == "changeable" && value.GetString() == "True"
+                        };
+                        break;
+                }
+            }
+
+            // Only add if we have an ID (valid object)
+            if (!string.IsNullOrEmpty(objInfo.Path))
+            {
+                objInfo.Properties = properties;
+                objects.Add(objInfo);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Extract value from JSON element based on its type
+    /// </summary>
+    private object GetJsonValue(JsonElement element)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.String => element.GetString() ?? "",
+            JsonValueKind.Number => element.TryGetInt32(out int intVal) ? intVal : element.GetDouble(),
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Null => "",
+            _ => element.ToString()
+        };
     }
 
     private void TraverseObjects(object parent, string parentPath, List<ObjectInfo> objects, int depth = 0)
