@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Reflection;
 using Serilog;
 using SapBridge.Core.Models;
 
@@ -9,8 +10,8 @@ namespace SapBridge.Core;
 public class SapGuiConnector
 {
     private readonly ILogger _logger;
-    private dynamic? _sapGuiApp;
-    private readonly Dictionary<string, dynamic> _sessions = new();
+    private object? _sapGuiApp;
+    private readonly Dictionary<string, object> _sessions = new();
 
     public SapGuiConnector(ILogger logger)
     {
@@ -33,8 +34,7 @@ public class SapGuiConnector
             InitializeSapGuiApp();
 
             // Step 2: Get or open connection
-            dynamic connection;
-            dynamic session;
+            object session;
 
             if (string.IsNullOrWhiteSpace(server))
             {
@@ -45,7 +45,7 @@ public class SapGuiConnector
             else
             {
                 // Scenario 2 or 3: Open new connection
-                connection = OpenConnection(server, systemNumber, client);
+                object connection = OpenConnection(server, systemNumber, client);
                 session = GetSessionFromConnection(connection);
             }
 
@@ -83,7 +83,7 @@ public class SapGuiConnector
         {
             // Bind to running SAP GUI instance via ROT (Running Object Table)
             _logger.Information("Binding to SAP GUI via ROT...");
-            dynamic sapGuiAuto = Marshal.BindToMoniker("SAPGUI");
+            object sapGuiAuto = Marshal.BindToMoniker("SAPGUI");
             
             if (sapGuiAuto == null)
             {
@@ -95,7 +95,8 @@ public class SapGuiConnector
                 );
             }
 
-            _sapGuiApp = sapGuiAuto.GetScriptingEngine();
+            // Use reflection to call GetScriptingEngine() - avoids COM type library issues
+            _sapGuiApp = InvokeMethod(sapGuiAuto, "GetScriptingEngine");
             
             if (_sapGuiApp == null)
             {
@@ -119,9 +120,12 @@ public class SapGuiConnector
         }
     }
 
-    private dynamic GetActiveSession()
+    private object GetActiveSession()
     {
-        if (_sapGuiApp.Connections.Count == 0)
+        object connections = GetProperty(_sapGuiApp!, "Connections");
+        int connectionCount = (int)GetProperty(connections, "Count")!;
+        
+        if (connectionCount == 0)
         {
             throw new Exception(
                 "No active SAP connections found. Please:\n" +
@@ -131,20 +135,22 @@ public class SapGuiConnector
             );
         }
 
-        dynamic connection = _sapGuiApp.Connections.ElementAt(0);
+        object connection = InvokeMethod(connections, "Item", 0)!;
+        object children = GetProperty(connection, "Children")!;
+        int childCount = (int)GetProperty(children, "Count")!;
         
-        if (connection.Children.Count == 0)
+        if (childCount == 0)
         {
             throw new Exception("No active session found in the connection");
         }
 
-        dynamic session = connection.Children.ElementAt(0);
+        object session = InvokeMethod(children, "Item", 0)!;
         _logger.Information("Using existing active session");
         
         return session;
     }
 
-    private dynamic OpenConnection(string server, string? systemNumber, string? client)
+    private object OpenConnection(string server, string? systemNumber, string? client)
     {
         _logger.Information($"Opening connection to: {server}");
 
@@ -153,7 +159,7 @@ public class SapGuiConnector
             // Try opening by connection name first (from SAP Logon saved connections)
             // Example: "SAP Server Latest"
             _logger.Information($"Attempting to open by connection name: {server}");
-            return _sapGuiApp.OpenConnection(server, true);
+            return InvokeMethod(_sapGuiApp!, "OpenConnection", server, true)!;
         }
         catch (Exception ex1)
         {
@@ -164,7 +170,7 @@ public class SapGuiConnector
                 // Build connection string based on available parameters
                 string connectionString = BuildConnectionString(server, systemNumber);
                 _logger.Information($"Opening connection with string: {connectionString}");
-                return _sapGuiApp.OpenConnection(connectionString, true);
+                return InvokeMethod(_sapGuiApp!, "OpenConnection", connectionString, true)!;
             }
             catch (Exception ex2)
             {
@@ -201,27 +207,32 @@ public class SapGuiConnector
         return $"/H/{server}/S/{sapPort}";
     }
 
-    private dynamic GetSessionFromConnection(dynamic connection)
+    private object GetSessionFromConnection(object connection)
     {
-        if (connection.Children.Count == 0)
+        object children = GetProperty(connection, "Children")!;
+        int childCount = (int)GetProperty(children, "Count")!;
+        
+        if (childCount == 0)
         {
             throw new Exception("Connection opened but no session available");
         }
 
-        return connection.Children.ElementAt(0);
+        return InvokeMethod(children, "Item", 0)!;
     }
 
-    private SessionInfo ExtractSessionInfo(dynamic session, string sessionId)
+    private SessionInfo ExtractSessionInfo(object session, string sessionId)
     {
         try
         {
+            object info = GetProperty(session, "Info")!;
+            
             return new SessionInfo
             {
                 SessionId = sessionId,
-                SystemName = session.Info.SystemName ?? "Unknown",
-                Client = session.Info.Client ?? "000",
-                User = session.Info.User ?? "Unknown",
-                Language = session.Info.Language ?? "EN",
+                SystemName = GetProperty(info, "SystemName") as string ?? "Unknown",
+                Client = GetProperty(info, "Client") as string ?? "000",
+                User = GetProperty(info, "User") as string ?? "Unknown",
+                Language = GetProperty(info, "Language") as string ?? "EN",
                 ConnectedAt = DateTime.UtcNow
             };
         }
@@ -240,7 +251,7 @@ public class SapGuiConnector
         }
     }
 
-    public dynamic GetSession(string sessionId)
+    public object GetSession(string sessionId)
     {
         if (!_sessions.TryGetValue(sessionId, out var session))
             throw new Exception($"Session not found: {sessionId}");
@@ -269,6 +280,31 @@ public class SapGuiConnector
     public List<string> GetActiveSessions()
     {
         return _sessions.Keys.ToList();
+    }
+
+    // Reflection helper methods to avoid COM type library issues
+    private static object? InvokeMethod(object obj, string methodName, params object[] parameters)
+    {
+        Type type = obj.GetType();
+        return type.InvokeMember(
+            methodName,
+            BindingFlags.InvokeMethod,
+            null,
+            obj,
+            parameters
+        );
+    }
+
+    private static object? GetProperty(object obj, string propertyName)
+    {
+        Type type = obj.GetType();
+        return type.InvokeMember(
+            propertyName,
+            BindingFlags.GetProperty,
+            null,
+            obj,
+            null
+        );
     }
 }
 
