@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using System.Reflection;
 using System.Runtime.Versioning;
 using SapBridge.Core;
 using SapBridge.Core.Models;
@@ -33,7 +34,7 @@ public class ObjectController : ControllerBase
         try
         {
             var session = _connector.GetSession(sessionId);
-            var obj = session.FindById(path);
+            var obj = InvokeMethod(session, "FindById", path);
             
             if (obj == null)
                 return NotFound(new { error = $"Object not found: {path}" });
@@ -66,6 +67,19 @@ public class ObjectController : ControllerBase
             _logger.Error(ex, "Error invoking method");
             return StatusCode(500, new { error = ex.Message });
         }
+    }
+
+    // Reflection helper to call methods on COM objects
+    private static object? InvokeMethod(object obj, string methodName, params object[] parameters)
+    {
+        Type type = obj.GetType();
+        return type.InvokeMember(
+            methodName,
+            BindingFlags.InvokeMethod,
+            null,
+            obj,
+            parameters
+        );
     }
 }
 

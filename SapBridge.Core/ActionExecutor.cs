@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using Serilog;
 using SapBridge.Core.Models;
@@ -14,7 +15,7 @@ public class ActionExecutor
         _logger = logger;
     }
 
-    public ActionResult ExecuteAction(dynamic session, ActionRequest request)
+    public ActionResult ExecuteAction(object session, ActionRequest request)
     {
         var stopwatch = Stopwatch.StartNew();
         
@@ -23,7 +24,7 @@ public class ActionExecutor
             _logger.Information($"Executing {request.Method} on {request.ObjectPath}");
 
             // Find the object
-            dynamic obj = session.FindById(request.ObjectPath);
+            object? obj = FindById(session, request.ObjectPath);
             
             if (obj == null)
             {
@@ -73,7 +74,18 @@ public class ActionExecutor
         }
     }
 
-    private object? InvokeMethod(dynamic obj, string methodName, object[] args)
+    private static object? FindById(object session, string path)
+    {
+        return session.GetType().InvokeMember(
+            "FindById",
+            BindingFlags.InvokeMethod,
+            null,
+            session,
+            new object[] { path }
+        );
+    }
+
+    private object? InvokeMethod(object obj, string methodName, object[] args)
     {
         try
         {

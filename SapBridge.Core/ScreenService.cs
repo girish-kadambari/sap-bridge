@@ -1,3 +1,4 @@
+using System.Reflection;
 using Serilog;
 using SapBridge.Core.Models;
 
@@ -14,52 +15,60 @@ public class ScreenService
         _introspector = introspector;
     }
 
-    public ScreenState GetScreenState(dynamic session)
+    public ScreenState GetScreenState(object session)
     {
+        object info = GetProperty(session, "Info")!;
+        
         var screenState = new ScreenState
         {
-            Transaction = GetSafeProperty(session.Info, "Transaction") ?? "",
-            ScreenNumber = GetSafeProperty(session.Info, "ScreenNumber") ?? "",
-            ProgramName = GetSafeProperty(session.Info, "Program") ?? "",
+            Transaction = GetSafeProperty(info, "Transaction") ?? "",
+            ScreenNumber = GetSafeProperty(info, "ScreenNumber") ?? "",
+            ProgramName = GetSafeProperty(info, "Program") ?? "",
         };
 
         // Get title bar
         try
         {
-            var mainWindow = session.FindById("wnd[0]");
-            screenState.TitleBar = GetSafeProperty(mainWindow, "Text") ?? "";
+            var mainWindow = InvokeMethod(session, "FindById", "wnd[0]");
+            if (mainWindow != null)
+                screenState.TitleBar = GetSafeProperty(mainWindow, "Text") ?? "";
         }
         catch { }
 
         // Get status bar
         try
         {
-            var statusbar = session.FindById("wnd[0]/sbar");
-            screenState.StatusBar = new StatusBarInfo
+            var statusbar = InvokeMethod(session, "FindById", "wnd[0]/sbar");
+            if (statusbar != null)
             {
-                Text = GetSafeProperty(statusbar, "Text") ?? "",
-                Type = GetStatusBarType(statusbar)
-            };
-
-            // Get all messages
-            try
-            {
-                int messageCount = statusbar.MessageCount;
-                for (int i = 0; i < messageCount; i++)
+                screenState.StatusBar = new StatusBarInfo
                 {
-                    string message = statusbar.GetMessage(i);
-                    screenState.StatusBar.Messages.Add(message);
+                    Text = GetSafeProperty(statusbar, "Text") ?? "",
+                    Type = GetStatusBarType(statusbar)
+                };
+
+                // Get all messages
+                try
+                {
+                    int messageCount = (int)(GetProperty(statusbar, "MessageCount") ?? 0);
+                    for (int i = 0; i < messageCount; i++)
+                    {
+                        string? message = InvokeMethod(statusbar, "GetMessage", i) as string;
+                        if (message != null)
+                            screenState.StatusBar.Messages.Add(message);
+                    }
                 }
+                catch { }
             }
-            catch { }
         }
         catch { }
 
         // Get all objects in the main window
         try
         {
-            var mainWindow = session.FindById("wnd[0]");
-            TraverseObjects(mainWindow, "wnd[0]", screenState.Objects);
+            var mainWindow = InvokeMethod(session, "FindById", "wnd[0]");
+            if (mainWindow != null)
+                TraverseObjects(mainWindow, "wnd[0]", screenState.Objects);
         }
         catch (Exception ex)
         {
@@ -69,21 +78,24 @@ public class ScreenService
         return screenState;
     }
 
-    private void TraverseObjects(dynamic parent, string parentPath, List<ObjectInfo> objects, int depth = 0)
+    private void TraverseObjects(object parent, string parentPath, List<ObjectInfo> objects, int depth = 0)
     {
         // Limit recursion depth
         if (depth > 10) return;
 
         try
         {
-            var children = parent.Children;
+            var children = GetProperty(parent, "Children");
             if (children == null) return;
 
-            for (int i = 0; i < children.Count; i++)
+            int childCount = (int)(GetProperty(children, "Count") ?? 0);
+            for (int i = 0; i < childCount; i++)
             {
                 try
                 {
-                    var child = children.ElementAt(i);
+                    var child = InvokeMethod(children, "ElementAt", i);
+                    if (child == null) continue;
+                    
                     string childId = GetSafeProperty(child, "Id") ?? $"{parentPath}/child[{i}]";
                     string childType = GetSafeProperty(child, "Type") ?? "Unknown";
 
@@ -121,11 +133,11 @@ public class ScreenService
         return containerTypes.Contains(type);
     }
 
-    private string GetStatusBarType(dynamic statusbar)
+    private string GetStatusBarType(object statusbar)
     {
         try
         {
-            string messageType = statusbar.MessageType;
+            string? messageType = GetSafeProperty(statusbar, "MessageType");
             return messageType?.ToLower() switch
             {
                 "s" => "success",
@@ -141,7 +153,7 @@ public class ScreenService
         }
     }
 
-    private string? GetSafeProperty(dynamic obj, string propertyName)
+    private string? GetSafeProperty(object obj, string propertyName)
     {
         try
         {
@@ -158,6 +170,31 @@ public class ScreenService
         {
             return null;
         }
+    }
+
+    // Reflection helpers
+    private static object? InvokeMethod(object obj, string methodName, params object[] parameters)
+    {
+        Type type = obj.GetType();
+        return type.InvokeMember(
+            methodName,
+            BindingFlags.InvokeMethod,
+            null,
+            obj,
+            parameters
+        );
+    }
+
+    private static object? GetProperty(object obj, string propertyName)
+    {
+        Type type = obj.GetType();
+        return type.InvokeMember(
+            propertyName,
+            BindingFlags.GetProperty,
+            null,
+            obj,
+            null
+        );
     }
 }
 
