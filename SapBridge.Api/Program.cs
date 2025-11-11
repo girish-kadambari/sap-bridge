@@ -29,7 +29,9 @@ builder.Services.AddCors(options =>
 
 // Register SAP services as singletons
 builder.Services.AddSingleton(Log.Logger);
+#pragma warning disable CA1416 // Validate platform compatibility - This is a Windows-only service
 builder.Services.AddSingleton<SapGuiConnector>();
+#pragma warning restore CA1416
 builder.Services.AddSingleton<ComIntrospector>();
 builder.Services.AddSingleton<ScreenService>();
 builder.Services.AddSingleton<ActionExecutor>();

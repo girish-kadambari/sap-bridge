@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using System.Runtime.Versioning;
 using SapBridge.Core;
 using SapBridge.Core.Models;
 
@@ -6,6 +7,7 @@ namespace SapBridge.Api.Controllers;
 
 [ApiController]
 [Route("api/session")]
+[SupportedOSPlatform("windows")]
 public class SessionController : ControllerBase
 {
     private readonly SapGuiConnector _connector;

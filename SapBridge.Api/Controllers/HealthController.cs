@@ -1,10 +1,12 @@
 using Microsoft.AspNetCore.Mvc;
+using System.Runtime.Versioning;
 using SapBridge.Core;
 
 namespace SapBridge.Api.Controllers;
 
 [ApiController]
 [Route("api/health")]
+[SupportedOSPlatform("windows")]
 public class HealthController : ControllerBase
 {
     private readonly SapGuiConnector _connector;

@@ -1,10 +1,12 @@
 using Microsoft.AspNetCore.Mvc;
+using System.Runtime.Versioning;
 using SapBridge.Core;
 
 namespace SapBridge.Api.Controllers;
 
 [ApiController]
 [Route("api/screen")]
+[SupportedOSPlatform("windows")]
 public class ScreenController : ControllerBase
 {
     private readonly SapGuiConnector _connector;
@@ -48,7 +50,8 @@ public class ScreenController : ControllerBase
             var screenState = _screenService.GetScreenState(session);
 
             // Filter objects based on query
-            var matchingObjects = screenState.Objects.Where(obj =>
+            var matchingObjects = new List<dynamic>();
+            foreach (var obj in screenState.Objects)
             {
                 bool matches = true;
 
@@ -61,8 +64,9 @@ public class ScreenController : ControllerBase
                 if (!string.IsNullOrEmpty(request.Text))
                     matches = matches && obj.Text.Contains(request.Text);
 
-                return matches;
-            }).ToList();
+                if (matches)
+                    matchingObjects.Add(obj);
+            }
 
             return Ok(new { objects = matchingObjects });
         }
