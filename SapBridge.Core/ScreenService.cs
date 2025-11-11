@@ -122,6 +122,7 @@ public class ScreenService
             {
                 "Id",           // Object path/ID
                 "Type",         // GuiTextField, GuiButton, etc.
+                "SubType",      // For shell components: Grid, Tree, Table, etc.
                 "Name",         // Field name (e.g., RSYST-MANDT)
                 "Text",         // Current text value
                 "Tooltip",      // Tooltip text
@@ -287,6 +288,9 @@ public class ScreenService
                         case "Type":
                             objInfo.Type = stringValue;
                             break;
+                        case "SubType":
+                            objInfo.SubType = stringValue;
+                            break;
                         case "Name":
                             objInfo.Name = stringValue;
                             break;
@@ -315,7 +319,12 @@ public class ScreenService
                 {
                     objInfo.Properties = properties;
                     objects.Add(objInfo);
-                    _logger.Information($"{indent}✓ Added object: {objInfo.Path} (Type: {objInfo.Type})");
+                    
+                    // Log with SubType if present
+                    string typeInfo = string.IsNullOrEmpty(objInfo.SubType) 
+                        ? $"Type: {objInfo.Type}" 
+                        : $"Type: {objInfo.Type}, SubType: {objInfo.SubType}";
+                    _logger.Information($"{indent}✓ Added object: {objInfo.Path} ({typeInfo})");
                 }
                 else
                 {
@@ -328,16 +337,76 @@ public class ScreenService
             }
 
             // Recursively process children array if it exists
+            // BUT: Skip children for Table components to avoid capturing thousands of cells
             if (childrenElement.HasValue)
             {
-                _logger.Debug($"{indent}  Processing children array...");
-                ParseJsonElement(childrenElement.Value, objects, depth + 1);
+                bool isTable = IsTableComponent(element);
+                
+                if (isTable)
+                {
+                    _logger.Debug($"{indent}  ⚠️  Skipping children of Table component (to avoid cell explosion)");
+                }
+                else
+                {
+                    _logger.Debug($"{indent}  Processing children array...");
+                    ParseJsonElement(childrenElement.Value, objects, depth + 1);
+                }
             }
             else
             {
                 _logger.Debug($"{indent}  No 'children' array found");
             }
         }
+    }
+
+    /// <summary>
+    /// Check if a JSON element represents a Table component
+    /// Tables have thousands of cell children - we should skip them
+    /// </summary>
+    private bool IsTableComponent(JsonElement element)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+            return false;
+
+        try
+        {
+            foreach (JsonProperty prop in element.EnumerateObject())
+            {
+                if (prop.Name.Equals("properties", StringComparison.OrdinalIgnoreCase) && 
+                    prop.Value.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (JsonProperty innerProp in prop.Value.EnumerateObject())
+                    {
+                        // Check Type property
+                        if (innerProp.Name.Equals("Type", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string? typeValue = innerProp.Value.GetString();
+                            if (typeValue != null && typeValue.Contains("Table", StringComparison.OrdinalIgnoreCase))
+                            {
+                                return true;
+                            }
+                        }
+                        
+                        // Check SubType property
+                        if (innerProp.Name.Equals("SubType", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string? subTypeValue = innerProp.Value.GetString();
+                            if (subTypeValue != null && subTypeValue.Equals("Table", StringComparison.OrdinalIgnoreCase))
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // If any error, assume not a table
+            return false;
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -390,15 +459,24 @@ public class ScreenService
                     
                     string childId = GetSafeProperty(child, "Id") ?? $"{parentPath}/child[{i}]";
                     string childType = GetSafeProperty(child, "Type") ?? "Unknown";
+                    string childSubType = GetSafeProperty(child, "SubType") ?? "";
 
-                    _logger.Debug($"Found object: {childId} (Type: {childType})");
+                    _logger.Debug($"Found object: {childId} (Type: {childType}, SubType: {childSubType})");
 
                     // Introspect this object
                     var objectInfo = _introspector.IntrospectObject(child, childId);
                     objects.Add(objectInfo);
 
-                    // Recursively traverse if it's a container
-                    if (IsContainer(childType))
+                    // Check if this is a table - if so, skip its children to avoid cell explosion
+                    bool isTable = childType.Contains("Table", StringComparison.OrdinalIgnoreCase) || 
+                                   childSubType.Equals("Table", StringComparison.OrdinalIgnoreCase);
+                    
+                    if (isTable)
+                    {
+                        _logger.Debug($"⚠️  Skipping children of Table: {childId} (to avoid cell explosion)");
+                    }
+                    // Recursively traverse if it's a container (but not a table)
+                    else if (IsContainer(childType))
                     {
                         _logger.Debug($"Recursing into container: {childId}");
                         TraverseObjects(child, childId, objects, depth + 1);

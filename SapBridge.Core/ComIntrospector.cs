@@ -24,6 +24,7 @@ public class ComIntrospector
         {
             // Get basic properties
             objectInfo.Type = GetSafeProperty(comObject, "Type") ?? "Unknown";
+            objectInfo.SubType = GetSafeProperty(comObject, "SubType") ?? ""; // For Shell components
             objectInfo.Name = GetSafeProperty(comObject, "Name") ?? "";
             objectInfo.Text = GetSafeProperty(comObject, "Text") ?? "";
             
@@ -92,7 +93,7 @@ public class ComIntrospector
         // Common properties to check
         var propertiesToCheck = new[] 
         {
-            "Text", "Name", "Id", "Type", "Tooltip", "Label",
+            "Text", "Name", "Id", "Type", "SubType", "Tooltip", "Label",
             "MaxLength", "Modified", "Changeable", "Left", "Top",
             "Width", "Height", "Key", "Value", "ScreenLeft", "ScreenTop"
         };
