@@ -27,14 +27,10 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Register SAP services as singletons
-builder.Services.AddSingleton(Log.Logger);
-#pragma warning disable CA1416 // Validate platform compatibility - This is a Windows-only service
+// Register application services
 builder.Services.AddSingleton<SapGuiConnector>();
-#pragma warning restore CA1416
-builder.Services.AddSingleton<ComIntrospector>();
-builder.Services.AddSingleton<ScreenService>();
 builder.Services.AddSingleton<ActionExecutor>();
+builder.Services.AddSingleton<ScreenService>();
 
 var app = builder.Build();
 

@@ -9,12 +9,10 @@ namespace SapBridge.Core;
 public class ScreenService
 {
     private readonly ILogger _logger;
-    private readonly ComIntrospector _introspector;
 
-    public ScreenService(ILogger logger, ComIntrospector introspector)
+    public ScreenService(ILogger logger)
     {
         _logger = logger;
-        _introspector = introspector;
     }
 
     public ScreenState GetScreenState(object session)
@@ -65,56 +63,24 @@ public class ScreenService
         }
         catch { }
 
-        // Get all objects in the main window - HYBRID APPROACH
-        // 1. Use GetObjectTree for fast bulk retrieval
-        // 2. Then traverse tabs specifically (GetObjectTree doesn't include inactive tab contents!)
+        // Get all objects by parsing the GetObjectTree JSON output.
+        // This is the primary and only method for object discovery.
         try
         {
-            _logger.Debug("Starting object retrieval...");
-            int objectCountBefore = screenState.Objects.Count;
-            bool usedOptimized = false;
-            
-            // Try the fast path first (GetObjectTree - 10-100x faster!)
-            if (TryGetObjectTreeOptimized(session, screenState.Objects))
+            _logger.Information("Starting object retrieval via GetObjectTree JSON...");
+            bool success = TryGetObjectTreeOptimized(session, screenState.Objects);
+            if (success)
             {
-                int retrieved = screenState.Objects.Count - objectCountBefore;
-                _logger.Information($"Used optimized GetObjectTree method - retrieved {retrieved} objects");
-                usedOptimized = true;
+                _logger.Information($"Successfully parsed {screenState.Objects.Count} objects from JSON.");
             }
             else
             {
-                // Fallback to slow traversal if GetObjectTree not available
-                _logger.Warning("GetObjectTree not available or returned 0 objects, falling back to slow traversal");
-                var mainWindow = InvokeMethod(session, "FindById", "wnd[0]");
-                if (mainWindow != null)
-                {
-                    _logger.Debug("Starting slow object traversal...");
-                    TraverseObjects(mainWindow, "wnd[0]", screenState.Objects);
-                    int retrieved = screenState.Objects.Count - objectCountBefore;
-                    _logger.Information($"Slow traversal retrieved {retrieved} objects");
-                }
-                else
-                {
-                    _logger.Error("Could not find main window wnd[0]");
-                }
+                _logger.Warning("Failed to retrieve or parse objects from GetObjectTree.");
             }
-            
-            // CRITICAL: If we used GetObjectTree, do supplementary traversal for tabs
-            // GetObjectTree doesn't include contents of inactive tabs!
-            if (usedOptimized)
-            {
-                _logger.Information("🔍 Starting supplementary traversal for tabs (GetObjectTree limitation)...");
-                int beforeTabTraversal = screenState.Objects.Count;
-                TraverseTabsForMissingContent(session, screenState.Objects);
-                int tabContentFound = screenState.Objects.Count - beforeTabTraversal;
-                _logger.Information($"Supplementary tab traversal found {tabContentFound} additional objects");
-            }
-            
-            _logger.Information($"Total objects in screen state: {screenState.Objects.Count}");
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Error getting screen objects");
+            _logger.Error(ex, "An unhandled exception occurred during GetObjectTree parsing.");
         }
 
         return screenState;
@@ -211,7 +177,7 @@ public class ScreenService
             int beforeCount = objects.Count;
             
             // Parse the JSON tree recursively
-            ParseJsonElement(root, objects, 0);
+            ParseJsonElement(root, objects);
             
             int parsedCount = objects.Count - beforeCount;
             _logger.Information($"Successfully parsed {parsedCount} objects from GetObjectTree JSON");
@@ -227,27 +193,14 @@ public class ScreenService
     /// Recursively parse JSON elements into ObjectInfo
     /// Structure: {"properties": {...}, "children": [...]} or {"children": [...]}
     /// </summary>
-    private void ParseJsonElement(JsonElement element, List<ObjectInfo> objects, int depth)
+    private void ParseJsonElement(JsonElement element, List<ObjectInfo> objects)
     {
-        // Limit recursion depth for safety
-        if (depth > 20)
-        {
-            _logger.Warning($"Max recursion depth reached at depth {depth}");
-            return;
-        }
-
-        string indent = new string(' ', depth * 2);
-        _logger.Debug($"{indent}ParseJsonElement: depth={depth}, type={element.ValueKind}");
-
         // If it's an array, process each item
         if (element.ValueKind == JsonValueKind.Array)
         {
-            int index = 0;
             foreach (JsonElement item in element.EnumerateArray())
             {
-                _logger.Debug($"{indent}  Processing array item {index}");
-                ParseJsonElement(item, objects, depth + 1);
-                index++;
+                ParseJsonElement(item, objects);
             }
             return;
         }
@@ -261,21 +214,15 @@ public class ScreenService
             // First pass: identify "properties" and "children" fields
             foreach (JsonProperty jsonProp in element.EnumerateObject())
             {
-                _logger.Debug($"{indent}  Found property: {jsonProp.Name} (type: {jsonProp.Value.ValueKind})");
-                
                 if (jsonProp.Name.Equals("properties", StringComparison.OrdinalIgnoreCase) && 
                     jsonProp.Value.ValueKind == JsonValueKind.Object)
                 {
                     propertiesElement = jsonProp.Value;
-                    _logger.Debug($"{indent}    -> This is the properties object");
                 }
                 else if (jsonProp.Name.Equals("children", StringComparison.OrdinalIgnoreCase) && 
                          jsonProp.Value.ValueKind == JsonValueKind.Array)
                 {
                     childrenElement = jsonProp.Value;
-                    int childCount = 0;
-                    foreach (var _ in jsonProp.Value.EnumerateArray()) childCount++;
-                    _logger.Debug($"{indent}    -> This is the children array ({childCount} children)");
                 }
             }
 
@@ -336,16 +283,16 @@ public class ScreenService
                     string typeInfo = string.IsNullOrEmpty(objInfo.SubType) 
                         ? $"Type: {objInfo.Type}" 
                         : $"Type: {objInfo.Type}, SubType: {objInfo.SubType}";
-                    _logger.Information($"{indent}✓ Added object: {objInfo.Path} ({typeInfo})");
+                    _logger.Information($"✓ Added object: {objInfo.Path} ({typeInfo})");
                 }
                 else
                 {
-                    _logger.Warning($"{indent}✗ Skipped object without Path/Id - Type: {objInfo.Type}, Name: {objInfo.Name}");
+                    _logger.Warning($"✗ Skipped object without Path/Id - Type: {objInfo.Type}, Name: {objInfo.Name}");
                 }
             }
             else
             {
-                _logger.Debug($"{indent}  No 'properties' object found at this level");
+                _logger.Debug($"  No 'properties' object found at this level");
             }
 
             // Recursively process children array if it exists
@@ -356,12 +303,12 @@ public class ScreenService
                 
                 if (isTable)
                 {
-                    _logger.Debug($"{indent}  ⚠️  Skipping children of Table component (to avoid cell explosion)");
+                    _logger.Debug($"  ⚠️  Skipping children of Table component (to avoid cell explosion)");
                 }
                 else
                 {
-                    _logger.Debug($"{indent}  Processing children array...");
-                    ParseJsonElement(childrenElement.Value, objects, depth + 1);
+                    _logger.Debug($"  Processing children array...");
+                    ParseJsonElement(childrenElement.Value, objects);
                 }
             }
             else
@@ -385,7 +332,7 @@ public class ScreenService
                                             (typeValue.Contains("Tab", StringComparison.OrdinalIgnoreCase) ||
                                              typeValue.Contains("Strip", StringComparison.OrdinalIgnoreCase)))
                                         {
-                                            _logger.Warning($"{indent}  ⚠️  Tab/TabStrip has NO children array - might be inactive tab!");
+                                            _logger.Warning($"  ⚠️  Tab/TabStrip has NO children array - might be inactive tab!");
                                         }
                                     }
                                 }
@@ -395,7 +342,7 @@ public class ScreenService
                     catch { }
                 }
                 
-                _logger.Debug($"{indent}  No 'children' array found");
+                _logger.Debug($"  No 'children' array found");
             }
         }
     }
@@ -464,214 +411,6 @@ public class ScreenService
             JsonValueKind.Null => "",
             _ => element.ToString()
         };
-    }
-
-    private void TraverseObjects(object parent, string parentPath, List<ObjectInfo> objects, int depth = 0)
-    {
-        // Limit recursion depth (increased to handle deeply nested tabs/subcontainers)
-        if (depth > 20)
-        {
-            _logger.Warning($"Max recursion depth (20) reached at {parentPath}");
-            return;
-        }
-
-        try
-        {
-            var children = GetProperty(parent, "Children");
-            if (children == null)
-            {
-                _logger.Debug($"No children property found for {parentPath}");
-                return;
-            }
-
-            int childCount = (int)(GetProperty(children, "Count") ?? 0);
-            _logger.Debug($"Traversing {childCount} children of {parentPath} (depth: {depth})");
-            
-            for (int i = 0; i < childCount; i++)
-            {
-                try
-                {
-                    var child = InvokeMethod(children, "ElementAt", i);
-                    if (child == null)
-                    {
-                        _logger.Debug($"Child {i} of {parentPath} is null");
-                        continue;
-                    }
-                    
-                    string childId = GetSafeProperty(child, "Id") ?? $"{parentPath}/child[{i}]";
-                    string childType = GetSafeProperty(child, "Type") ?? "Unknown";
-                    string childSubType = GetSafeProperty(child, "SubType") ?? "";
-
-                    _logger.Debug($"Found object: {childId} (Type: {childType}, SubType: {childSubType})");
-
-                    // Introspect this object
-                    var objectInfo = _introspector.IntrospectObject(child, childId);
-                    objects.Add(objectInfo);
-
-                    // Check if this is a table - if so, skip its children to avoid cell explosion
-                    bool isTable = childType.Contains("Table", StringComparison.OrdinalIgnoreCase) || 
-                                   childSubType.Equals("Table", StringComparison.OrdinalIgnoreCase);
-                    
-                    if (isTable)
-                    {
-                        _logger.Debug($"⚠️  Skipping children of Table: {childId} (to avoid cell explosion)");
-                        continue;  // Skip to next sibling
-                    }
-
-                    // Try to traverse into children - use multiple fallback strategies
-                    bool didRecurse = false;
-                    
-                    // Strategy 1: Try to check if object has children
-                    try
-                    {
-                        var grandChildren = GetProperty(child, "Children");
-                        if (grandChildren != null)
-                        {
-                            int grandChildCount = (int)(GetProperty(grandChildren, "Count") ?? 0);
-                            if (grandChildCount > 0)
-                            {
-                                _logger.Debug($"Recursing into {childType} (has {grandChildCount} children): {childId}");
-                                TraverseObjects(child, childId, objects, depth + 1);
-                                didRecurse = true;
-                            }
-                            else
-                            {
-                                _logger.Debug($"{childType} has 0 children, skipping recursion: {childId}");
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Debug($"Could not check Children property for {childId}: {ex.Message}");
-                    }
-                    
-                    // Strategy 2: If Strategy 1 failed, recurse into known container types anyway
-                    if (!didRecurse && IsContainer(childType))
-                    {
-                        _logger.Debug($"Recursing into known container type {childType}: {childId}");
-                        TraverseObjects(child, childId, objects, depth + 1);
-                        didRecurse = true;
-                    }
-                    
-                    // Strategy 3: For tabs specifically, ALWAYS recurse (tabs might have lazy-loaded children)
-                    if (!didRecurse && (childType.Contains("Tab", StringComparison.OrdinalIgnoreCase) || 
-                                        childType.Contains("Strip", StringComparison.OrdinalIgnoreCase)))
-                    {
-                        _logger.Information($"🔍 Force recursing into Tab/TabStrip: {childId}");
-                        TraverseObjects(child, childId, objects, depth + 1);
-                        didRecurse = true;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.Debug(ex, $"Error traversing child {i} of {parentPath}");
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.Debug(ex, $"Error getting children of {parentPath}");
-        }
-    }
-
-    /// <summary>
-    /// Supplementary traversal specifically for Tab/TabStrip components
-    /// GetObjectTree doesn't include contents of inactive tabs, so we manually traverse them
-    /// </summary>
-    private void TraverseTabsForMissingContent(object session, List<ObjectInfo> objects)
-    {
-        try
-        {
-            // Build a hashset of existing object paths for quick lookup
-            var existingPaths = new HashSet<string>(objects.Select(o => o.Path));
-            int initialCount = objects.Count;
-            
-            // Find all tab-related objects
-            var tabObjects = objects
-                .Where(o => o.Type.Contains("Tab", StringComparison.OrdinalIgnoreCase) ||
-                           o.Type.Contains("Strip", StringComparison.OrdinalIgnoreCase))
-                .ToList();
-            
-            _logger.Information($"Found {tabObjects.Count} tab-related objects to traverse");
-            
-            foreach (var tabObj in tabObjects)
-            {
-                try
-                {
-                    _logger.Debug($"Attempting to traverse tab: {tabObj.Path} (Type: {tabObj.Type})");
-                    
-                    // Try to find this object via SAP API
-                    var sapObject = InvokeMethod(session, "FindById", tabObj.Path);
-                    if (sapObject == null)
-                    {
-                        _logger.Debug($"Could not find SAP object for path: {tabObj.Path}");
-                        continue;
-                    }
-                    
-                    // Create a temporary list for this tab's children
-                    var tabChildren = new List<ObjectInfo>();
-                    
-                    // Traverse into this specific tab
-                    TraverseObjects(sapObject, tabObj.Path, tabChildren, 0);
-                    
-                    // Add only NEW objects (that don't already exist)
-                    int addedCount = 0;
-                    foreach (var child in tabChildren)
-                    {
-                        if (!existingPaths.Contains(child.Path))
-                        {
-                            objects.Add(child);
-                            existingPaths.Add(child.Path);
-                            addedCount++;
-                        }
-                    }
-                    
-                    if (addedCount > 0)
-                    {
-                        _logger.Information($"✓ Tab {tabObj.Path} - added {addedCount} new objects");
-                    }
-                    else
-                    {
-                        _logger.Debug($"Tab {tabObj.Path} - no new objects (already captured or empty)");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.Debug(ex, $"Error traversing tab {tabObj.Path}");
-                }
-            }
-            
-            int totalAdded = objects.Count - initialCount;
-            _logger.Information($"Tab supplementary traversal completed: {totalAdded} new objects added");
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "Error in supplementary tab traversal");
-        }
-    }
-
-    private bool IsContainer(string type)
-    {
-        var containerTypes = new[] 
-        { 
-            "GuiUserArea", 
-            "GuiSimpleContainer", 
-            "GuiScrollContainer",
-            "GuiSplitterContainer", 
-            "GuiBox", 
-            "GuiTab", 
-            "GuiTabStrip",
-            "GuiShell", 
-            "GuiCustomControl",
-            "GuiComponentCollection",  // For subcontainers (sub/ssub)
-            "GuiContainerShell",       // For embedded containers
-            "GuiContainer",            // Generic container
-            "GuiFrameWindow",          // Frame windows
-            "GuiModalWindow",          // Modal dialogs
-            "GuiMainWindow"            // Main window
-        };
-        
-        return containerTypes.Contains(type);
     }
 
     private string GetStatusBarType(object statusbar)
