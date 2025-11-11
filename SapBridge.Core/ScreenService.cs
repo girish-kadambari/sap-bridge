@@ -66,21 +66,39 @@ public class ScreenService
         catch { }
 
         // Get all objects in the main window - USE OPTIMIZED GetObjectTree
+        // FIX: Ensure we fall back to slow traversal if GetObjectTree returns 0 objects
+        // Previous issue: TryGetObjectTreeOptimized returned true even with 0 objects,
+        // preventing the fallback from ever running
         try
         {
+            _logger.Debug("Starting object retrieval...");
+            int objectCountBefore = screenState.Objects.Count;
+            
             // Try the fast path first (GetObjectTree - 10-100x faster!)
             if (TryGetObjectTreeOptimized(session, screenState.Objects))
             {
-                _logger.Information("Used optimized GetObjectTree method");
+                int retrieved = screenState.Objects.Count - objectCountBefore;
+                _logger.Information($"Used optimized GetObjectTree method - retrieved {retrieved} objects");
             }
             else
             {
                 // Fallback to slow traversal if GetObjectTree not available
-                _logger.Warning("GetObjectTree not available, falling back to slow traversal");
+                _logger.Warning("GetObjectTree not available or returned 0 objects, falling back to slow traversal");
                 var mainWindow = InvokeMethod(session, "FindById", "wnd[0]");
                 if (mainWindow != null)
+                {
+                    _logger.Debug("Starting slow object traversal...");
                     TraverseObjects(mainWindow, "wnd[0]", screenState.Objects);
+                    int retrieved = screenState.Objects.Count - objectCountBefore;
+                    _logger.Information($"Slow traversal retrieved {retrieved} objects");
+                }
+                else
+                {
+                    _logger.Error("Could not find main window wnd[0]");
+                }
             }
+            
+            _logger.Information($"Total objects in screen state: {screenState.Objects.Count}");
         }
         catch (Exception ex)
         {
@@ -134,9 +152,19 @@ public class ScreenService
             }
 
             // Parse JSON into objects
+            int initialCount = objects.Count;
             ParseObjectTreeJson(json, objects);
             
-            _logger.Information($"GetObjectTree retrieved {objects.Count} objects");
+            int retrievedCount = objects.Count - initialCount;
+            _logger.Information($"GetObjectTree retrieved {retrievedCount} objects");
+            
+            // Return false if no objects were retrieved, so we fall back to slow traversal
+            if (retrievedCount == 0)
+            {
+                _logger.Warning("GetObjectTree returned 0 objects, falling back to slow method");
+                return false;
+            }
+            
             return true;
         }
         catch (Exception ex)
@@ -155,12 +183,19 @@ public class ScreenService
     {
         try
         {
+            _logger.Debug($"Parsing GetObjectTree JSON (length: {json.Length} chars)");
+            _logger.Debug($"JSON preview: {(json.Length > 200 ? json.Substring(0, 200) + "..." : json)}");
+            
             using JsonDocument doc = JsonDocument.Parse(json);
             JsonElement root = doc.RootElement;
 
+            _logger.Debug($"JSON root type: {root.ValueKind}");
+            
             // The JSON structure is typically an array or object with nested children
             // Recursively parse the tree
             ParseJsonElement(root, objects);
+            
+            _logger.Debug($"Parsed {objects.Count} objects from JSON");
         }
         catch (Exception ex)
         {
@@ -241,6 +276,12 @@ public class ScreenService
             {
                 objInfo.Properties = properties;
                 objects.Add(objInfo);
+                _logger.Debug($"Added object: {objInfo.Path} (Type: {objInfo.Type})");
+            }
+            else
+            {
+                // Debug: Log why object wasn't added
+                _logger.Debug($"Skipped object without Path - Type: {objInfo.Type}, Name: {objInfo.Name}, Properties: {properties.Count}");
             }
         }
     }
@@ -264,23 +305,39 @@ public class ScreenService
     private void TraverseObjects(object parent, string parentPath, List<ObjectInfo> objects, int depth = 0)
     {
         // Limit recursion depth
-        if (depth > 10) return;
+        if (depth > 10)
+        {
+            _logger.Debug($"Max recursion depth reached at {parentPath}");
+            return;
+        }
 
         try
         {
             var children = GetProperty(parent, "Children");
-            if (children == null) return;
+            if (children == null)
+            {
+                _logger.Debug($"No children property found for {parentPath}");
+                return;
+            }
 
             int childCount = (int)(GetProperty(children, "Count") ?? 0);
+            _logger.Debug($"Traversing {childCount} children of {parentPath} (depth: {depth})");
+            
             for (int i = 0; i < childCount; i++)
             {
                 try
                 {
                     var child = InvokeMethod(children, "ElementAt", i);
-                    if (child == null) continue;
+                    if (child == null)
+                    {
+                        _logger.Debug($"Child {i} of {parentPath} is null");
+                        continue;
+                    }
                     
                     string childId = GetSafeProperty(child, "Id") ?? $"{parentPath}/child[{i}]";
                     string childType = GetSafeProperty(child, "Type") ?? "Unknown";
+
+                    _logger.Debug($"Found object: {childId} (Type: {childType})");
 
                     // Introspect this object
                     var objectInfo = _introspector.IntrospectObject(child, childId);
@@ -289,6 +346,7 @@ public class ScreenService
                     // Recursively traverse if it's a container
                     if (IsContainer(childType))
                     {
+                        _logger.Debug($"Recursing into container: {childId}");
                         TraverseObjects(child, childId, objects, depth + 1);
                     }
                 }
