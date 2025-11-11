@@ -16,7 +16,7 @@ public class StatusBarInfo
 {
     public string Text { get; set; } = string.Empty;
     public string Type { get; set; } = "info"; // info, success, warning, error
-    public List<string> Messages { get; set} = new();
+    public List<string> Messages { get; set; } = new();
 }
 
 public class ObjectInfo
