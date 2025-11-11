@@ -50,8 +50,7 @@ public class ScreenController : ControllerBase
             var screenState = _screenService.GetScreenState(session);
 
             // Filter objects based on query
-            var matchingObjects = new List<dynamic>();
-            foreach (var obj in screenState.Objects)
+            var matchingObjects = screenState.Objects.Where(obj =>
             {
                 bool matches = true;
 
@@ -59,14 +58,13 @@ public class ScreenController : ControllerBase
                     matches = matches && obj.Type == request.Type;
 
                 if (!string.IsNullOrEmpty(request.Name))
-                    matches = matches && obj.Name.Contains(request.Name);
+                    matches = matches && (obj.Name?.Contains(request.Name, StringComparison.OrdinalIgnoreCase) ?? false);
 
                 if (!string.IsNullOrEmpty(request.Text))
-                    matches = matches && obj.Text.Contains(request.Text);
+                    matches = matches && (obj.Text?.Contains(request.Text, StringComparison.OrdinalIgnoreCase) ?? false);
 
-                if (matches)
-                    matchingObjects.Add(obj);
-            }
+                return matches;
+            }).ToList();
 
             return Ok(new { objects = matchingObjects });
         }

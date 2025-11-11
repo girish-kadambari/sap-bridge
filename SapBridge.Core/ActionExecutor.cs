@@ -110,49 +110,88 @@ public class ActionExecutor
         }
     }
 
-    private object? InvokeSetText(dynamic obj, object[] args)
+    private object? InvokeSetText(object obj, object[] args)
     {
         if (args.Length == 0)
             throw new ArgumentException("SetText requires a text argument");
-            
-        obj.Text = args[0].ToString();
+        
+        // Use reflection to set Text property
+        obj.GetType().InvokeMember(
+            "Text",
+            BindingFlags.SetProperty,
+            null,
+            obj,
+            new[] { args[0].ToString() }
+        );
         return null;
     }
 
-    private object? InvokeSetFocus(dynamic obj)
+    private object? InvokeSetFocus(object obj)
     {
-        obj.SetFocus();
-        return null;
+        // Use reflection to call SetFocus method
+        return obj.GetType().InvokeMember(
+            "SetFocus",
+            BindingFlags.InvokeMethod,
+            null,
+            obj,
+            null
+        );
     }
 
-    private object? InvokePress(dynamic obj)
+    private object? InvokePress(object obj)
     {
-        obj.Press();
-        return null;
+        // Use reflection to call Press method
+        return obj.GetType().InvokeMember(
+            "Press",
+            BindingFlags.InvokeMethod,
+            null,
+            obj,
+            null
+        );
     }
 
-    private object? InvokeSendVKey(dynamic obj, object[] args)
+    private object? InvokeSendVKey(object obj, object[] args)
     {
         if (args.Length == 0)
             throw new ArgumentException("SendVKey requires a key code argument");
-            
+        
         int keyCode = Convert.ToInt32(args[0]);
-        obj.SendVKey(keyCode);
-        return null;
+        
+        // Use reflection to call SendVKey method
+        return obj.GetType().InvokeMember(
+            "SendVKey",
+            BindingFlags.InvokeMethod,
+            null,
+            obj,
+            new object[] { keyCode }
+        );
     }
 
-    private object? InvokeSelect(dynamic obj)
+    private object? InvokeSelect(object obj)
     {
-        obj.Select();
-        return null;
+        // Use reflection to call Select method
+        return obj.GetType().InvokeMember(
+            "Select",
+            BindingFlags.InvokeMethod,
+            null,
+            obj,
+            null
+        );
     }
 
-    private object? InvokeGetText(dynamic obj)
+    private object? InvokeGetText(object obj)
     {
-        return obj.Text?.ToString();
+        // Use reflection to get Text property
+        return obj.GetType().InvokeMember(
+            "Text",
+            BindingFlags.GetProperty,
+            null,
+            obj,
+            null
+        )?.ToString();
     }
 
-    private object? GetProperty(dynamic obj, object[] args)
+    private object? GetProperty(object obj, object[] args)
     {
         if (args.Length == 0)
             throw new ArgumentException("GetProperty requires a property name");
@@ -161,14 +200,14 @@ public class ActionExecutor
         
         return obj.GetType().InvokeMember(
             propertyName,
-            System.Reflection.BindingFlags.GetProperty,
+            BindingFlags.GetProperty,
             null,
             obj,
             null
         );
     }
 
-    private object? SetProperty(dynamic obj, object[] args)
+    private object? SetProperty(object obj, object[] args)
     {
         if (args.Length < 2)
             throw new ArgumentException("SetProperty requires property name and value");
@@ -178,7 +217,7 @@ public class ActionExecutor
         
         obj.GetType().InvokeMember(
             propertyName,
-            System.Reflection.BindingFlags.SetProperty,
+            BindingFlags.SetProperty,
             null,
             obj,
             new[] { value }
@@ -187,11 +226,11 @@ public class ActionExecutor
         return null;
     }
 
-    private object? InvokeGenericMethod(dynamic obj, string methodName, object[] args)
+    private object? InvokeGenericMethod(object obj, string methodName, object[] args)
     {
         return obj.GetType().InvokeMember(
             methodName,
-            System.Reflection.BindingFlags.InvokeMethod,
+            BindingFlags.InvokeMethod,
             null,
             obj,
             args
