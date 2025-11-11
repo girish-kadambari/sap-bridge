@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using Serilog;
 using SapBridge.Core.Models;
 
@@ -115,13 +116,16 @@ public class ActionExecutor
         if (args.Length == 0)
             throw new ArgumentException("SetText requires a text argument");
         
+        // Convert JsonElement to string if needed
+        string text = ConvertToNativeType<string>(args[0]);
+        
         // Use reflection to set Text property
         obj.GetType().InvokeMember(
             "Text",
             BindingFlags.SetProperty,
             null,
             obj,
-            new[] { args[0].ToString() }
+            new[] { text }
         );
         return null;
     }
@@ -155,7 +159,8 @@ public class ActionExecutor
         if (args.Length == 0)
             throw new ArgumentException("SendVKey requires a key code argument");
         
-        int keyCode = Convert.ToInt32(args[0]);
+        // Convert JsonElement to int if needed
+        int keyCode = ConvertToNativeType<int>(args[0]);
         
         // Use reflection to call SendVKey method
         return obj.GetType().InvokeMember(
@@ -196,7 +201,7 @@ public class ActionExecutor
         if (args.Length == 0)
             throw new ArgumentException("GetProperty requires a property name");
             
-        string propertyName = args[0].ToString() ?? throw new ArgumentException("Property name cannot be null");
+        string propertyName = ConvertToNativeType<string>(args[0]);
         
         return obj.GetType().InvokeMember(
             propertyName,
@@ -212,8 +217,8 @@ public class ActionExecutor
         if (args.Length < 2)
             throw new ArgumentException("SetProperty requires property name and value");
             
-        string propertyName = args[0].ToString() ?? throw new ArgumentException("Property name cannot be null");
-        object value = args[1];
+        string propertyName = ConvertToNativeType<string>(args[0]);
+        object value = ConvertJsonElement(args[1]);
         
         obj.GetType().InvokeMember(
             propertyName,
@@ -228,13 +233,57 @@ public class ActionExecutor
 
     private object? InvokeGenericMethod(object obj, string methodName, object[] args)
     {
+        // Convert any JsonElement args to native types
+        object[] convertedArgs = args.Select(ConvertJsonElement).ToArray();
+        
         return obj.GetType().InvokeMember(
             methodName,
             BindingFlags.InvokeMethod,
             null,
             obj,
-            args
+            convertedArgs
         );
+    }
+
+    /// <summary>
+    /// Convert JsonElement or object to native type T
+    /// Handles the case where args come from JSON deserialization
+    /// </summary>
+    private static T ConvertToNativeType<T>(object value)
+    {
+        if (value is JsonElement jsonElement)
+        {
+            return jsonElement.Deserialize<T>() ?? throw new InvalidCastException($"Cannot convert JsonElement to {typeof(T).Name}");
+        }
+        
+        if (value is T typedValue)
+        {
+            return typedValue;
+        }
+        
+        // Fallback to Convert
+        return (T)Convert.ChangeType(value, typeof(T));
+    }
+
+    /// <summary>
+    /// Convert JsonElement to appropriate .NET type
+    /// </summary>
+    private static object ConvertJsonElement(object value)
+    {
+        if (value is JsonElement jsonElement)
+        {
+            return jsonElement.ValueKind switch
+            {
+                JsonValueKind.String => jsonElement.GetString() ?? string.Empty,
+                JsonValueKind.Number => jsonElement.TryGetInt32(out int intVal) ? intVal : jsonElement.GetDouble(),
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                JsonValueKind.Null => null!,
+                _ => jsonElement.ToString()
+            };
+        }
+        
+        return value;
     }
 }
 
