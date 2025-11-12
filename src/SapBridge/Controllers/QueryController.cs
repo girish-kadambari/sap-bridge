@@ -42,7 +42,7 @@ public class QueryController : ControllerBase
             {
                 return BadRequest(new
                 {
-                    Error = result.ErrorMessage,
+                    Error = result.Error,
                     ExecutionTimeMs = result.ExecutionTimeMs
                 });
             }

@@ -70,7 +70,7 @@ public class SessionService : ISessionService
         try
         {
             var session = _repository.GetSession(sessionId);
-            return _repository.IsSessionHealthy(session);
+            return _repository.IsSessionAlive(sessionId);
         }
         catch (Exception ex)
         {

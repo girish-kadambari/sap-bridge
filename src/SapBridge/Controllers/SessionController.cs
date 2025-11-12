@@ -32,7 +32,8 @@ public class SessionController : ControllerBase
     {
         try
         {
-            var sessionInfo = await _sessionService.ConnectAsync(request.SessionId);
+            // Default to session "0" (first session)
+            var sessionInfo = await _sessionService.ConnectAsync("0");
             return Ok(sessionInfo);
         }
         catch (Exception ex)

@@ -48,7 +48,7 @@ public class QueryEngine : IQueryEngine
             var validationResult = _validator.Validate(query);
             if (!validationResult.IsValid)
             {
-                var errorMessage = string.Join(", ", validationResult.Errors);
+                var errorMessage = validationResult.ErrorMessage ?? "Validation failed";
                 _logger.Warning("Query validation failed: {Errors}", errorMessage);
                 stopwatch.Stop();
                 return QueryResult.FailureResult(
