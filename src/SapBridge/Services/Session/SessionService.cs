@@ -21,15 +21,75 @@ public class SessionService : ISessionService
     }
 
     /// <inheritdoc/>
-    public async Task<SessionInfo> ConnectAsync(string sessionId)
+    public async Task<SessionInfo> ConnectAsync(string sessionId, string? server = null, string systemNumber = "00", string client = "100")
     {
         await Task.CompletedTask;
 
         try
         {
-            _logger.Information("Connecting to session {SessionId}", sessionId);
+            _logger.Information("Connecting to session {SessionId} (Server: {Server}, Client: {Client})", 
+                sessionId, server ?? "existing", client);
 
-            var session = _repository.GetSession(sessionId);
+            // Get SAP GUI application
+            var sapGuiApp = _repository.GetSapGuiApplication();
+            
+            // If server is provided, create a new connection
+            if (!string.IsNullOrEmpty(server))
+            {
+                return await ConnectToNewServerAsync(sessionId, server, systemNumber, client, sapGuiApp);
+            }
+            
+            // Get connections collection
+            var connections = _repository.GetObjectProperty(sapGuiApp, "Connections");
+            if (connections == null)
+            {
+                throw new InvalidOperationException("No SAP GUI connections found. Please open SAP GUI and log in.");
+            }
+            
+            // Get connection count
+            int connectionCount = Convert.ToInt32(_repository.GetObjectProperty(connections, "Count") ?? 0);
+            if (connectionCount == 0)
+            {
+                throw new InvalidOperationException("No active SAP GUI connections. Please open SAP GUI and log in.");
+            }
+            
+            // Get first connection (index 0)
+            var connection = _repository.InvokeObjectMethod(connections, "Item", 0);
+            if (connection == null)
+            {
+                throw new InvalidOperationException("Could not access SAP GUI connection.");
+            }
+            
+            // Get sessions from connection
+            var sessions = _repository.GetObjectProperty(connection, "Sessions");
+            if (sessions == null)
+            {
+                throw new InvalidOperationException("No sessions found in connection.");
+            }
+            
+            // Get session count
+            int sessionCount = Convert.ToInt32(_repository.GetObjectProperty(sessions, "Count") ?? 0);
+            if (sessionCount == 0)
+            {
+                throw new InvalidOperationException("No active sessions. Please open a session in SAP GUI.");
+            }
+            
+            // Get the requested session (default to first session if "0" is requested)
+            int sessionIndex = int.TryParse(sessionId, out int idx) ? idx : 0;
+            if (sessionIndex >= sessionCount)
+            {
+                throw new InvalidOperationException($"Session index {sessionIndex} out of range. Available sessions: 0-{sessionCount - 1}");
+            }
+            
+            var session = _repository.InvokeObjectMethod(sessions, "Item", sessionIndex);
+            if (session == null)
+            {
+                throw new InvalidOperationException($"Could not access session {sessionIndex}.");
+            }
+            
+            // Store the session for future use
+            _repository.StoreSession(sessionId, session);
+            
             var sessionInfo = ExtractSessionInfo(session, sessionId);
 
             _logger.Information("Connected to session {SessionId} successfully", sessionId);
@@ -41,6 +101,80 @@ public class SessionService : ISessionService
             var mapped = ComExceptionMapper.MapException(ex, $"connecting to session {sessionId}");
             throw new InvalidOperationException(mapped.Message, ex);
         }
+    }
+
+    /// <summary>
+    /// Connects to a new SAP server.
+    /// </summary>
+    private async Task<SessionInfo> ConnectToNewServerAsync(
+        string sessionId, 
+        string server, 
+        string systemNumber, 
+        string client, 
+        object sapGuiApp)
+    {
+        await Task.CompletedTask;
+        
+        _logger.Information("Opening new connection to server: {Server}", server);
+        
+        // Build connection string
+        // Format 1: /H/server/S/sysnr (for direct connection)
+        // Format 2: connection_name (for saved connections in SAP Logon)
+        string connectionString;
+        
+        // Check if server looks like an IP or hostname (contains . or numbers)
+        if (server.Contains(".") || server.Any(char.IsDigit))
+        {
+            // Direct connection: /H/server/S/sysnr/M/mandant
+            connectionString = $"/H/{server}/S/{systemNumber}/M/{client}";
+        }
+        else
+        {
+            // Saved connection name
+            connectionString = server;
+        }
+        
+        _logger.Debug("Connection string: {ConnectionString}", connectionString);
+        
+        // Open connection
+        var connection = _repository.InvokeObjectMethod(sapGuiApp, "OpenConnection", connectionString, true);
+        
+        if (connection == null)
+        {
+            throw new InvalidOperationException($"Failed to connect to server: {server}");
+        }
+        
+        _logger.Debug("Connection established, getting sessions...");
+        
+        // Get sessions from the new connection
+        var sessions = _repository.GetObjectProperty(connection, "Sessions");
+        if (sessions == null)
+        {
+            throw new InvalidOperationException("No sessions available after connection.");
+        }
+        
+        // Get session count
+        int sessionCount = Convert.ToInt32(_repository.GetObjectProperty(sessions, "Count") ?? 0);
+        if (sessionCount == 0)
+        {
+            throw new InvalidOperationException("Connection established but no session was created.");
+        }
+        
+        // Get first session (newly created)
+        var session = _repository.InvokeObjectMethod(sessions, "Item", 0);
+        if (session == null)
+        {
+            throw new InvalidOperationException("Could not access the new session.");
+        }
+        
+        // Store the session for future use
+        _repository.StoreSession(sessionId, session);
+        
+        var sessionInfo = ExtractSessionInfo(session, sessionId);
+        
+        _logger.Information("Successfully connected to new server and created session {SessionId}", sessionId);
+        
+        return sessionInfo;
     }
 
     /// <inheritdoc/>

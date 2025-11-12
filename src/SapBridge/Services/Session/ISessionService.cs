@@ -10,9 +10,12 @@ public interface ISessionService
     /// <summary>
     /// Connects to a SAP GUI session.
     /// </summary>
-    /// <param name="sessionId">The session ID to connect to.</param>
+    /// <param name="sessionId">The session ID to use.</param>
+    /// <param name="server">Server address or connection name (null = use existing session).</param>
+    /// <param name="systemNumber">SAP system number (e.g., "00").</param>
+    /// <param name="client">SAP client number (e.g., "100").</param>
     /// <returns>Session information.</returns>
-    Task<SessionInfo> ConnectAsync(string sessionId);
+    Task<SessionInfo> ConnectAsync(string sessionId, string? server = null, string systemNumber = "00", string client = "100");
 
     /// <summary>
     /// Gets information about a session.
