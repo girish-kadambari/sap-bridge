@@ -120,7 +120,7 @@ public class SessionService : ISessionService
 
             var objectInfo = new ObjectInfo
             {
-                Id = objectId,
+                Path = objectId,
                 Type = _repository.GetObjectProperty(obj, "Type")?.ToString() ?? "Unknown",
                 Name = _repository.GetObjectProperty(obj, "Name")?.ToString() ?? objectId,
                 Text = _repository.GetObjectProperty(obj, "Text")?.ToString()
