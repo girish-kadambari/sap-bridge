@@ -1,5 +1,6 @@
 using SapBridge.Models.Query;
 using Serilog;
+using ILogger = Serilog.ILogger;
 
 namespace SapBridge.Services.Query;
 

@@ -4,6 +4,7 @@ using SapBridge.Services.Grid;
 using SapBridge.Services.Table;
 using SapBridge.Services.Tree;
 using Serilog;
+using ILogger = Serilog.ILogger;
 
 namespace SapBridge.Services.Query;
 

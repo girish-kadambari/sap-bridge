@@ -3,6 +3,7 @@ using SapBridge.Models;
 using SapBridge.Models.Query;
 using SapBridge.Services.Grid;
 using Serilog;
+using ILogger = Serilog.ILogger;
 
 namespace SapBridge.Controllers;
 

@@ -3,6 +3,7 @@ using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using SapBridge.Models;
 using Serilog;
+using ILogger = Serilog.ILogger;
 
 namespace SapBridge.Services.Vision;
 

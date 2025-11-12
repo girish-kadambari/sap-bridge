@@ -5,6 +5,7 @@ using SapBridge.Repositories;
 using SapBridge.Services.Query;
 using SapBridge.Utils;
 using Serilog;
+using ILogger = Serilog.ILogger;
 
 namespace SapBridge.Services.Grid;
 

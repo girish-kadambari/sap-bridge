@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using SapBridge.Models;
 using SapBridge.Services.Vision;
 using Serilog;
+using ILogger = Serilog.ILogger;
 
 namespace SapBridge.Controllers;
 

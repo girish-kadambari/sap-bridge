@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using SapBridge.Services.Screen;
 using Serilog;
+using ILogger = Serilog.ILogger;
 
 namespace SapBridge.Controllers;
 

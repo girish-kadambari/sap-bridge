@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using Serilog;
 using SapBridge.Utils;
+using ILogger = Serilog.ILogger;
 
 namespace SapBridge.Repositories;
 
